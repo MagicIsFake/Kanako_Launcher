@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kanako Launcher</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-container">
+        <img src="kanako-launcher.png" class="logo" alt="Logo">
+
+        <div class="card-frame">
+            <h2>KANAKO LAUNCHER</h2>
+            
+            <div class="profile-section">
+                <label>Profile:</label>
+                <select id="profile-select" onchange="handleProfileChange()">
+                    <option value="MaryProfile">MaryProfile</option>
+                </select>
+                <button class="btn-small btn-green" onclick="createNewProfile()">+ New</button>
+                <button class="btn-small btn-dark" onclick="editProfile()">⚙️ Edit</button>
+            </div>
+
+            <div class="input-group">
+                <label>In-game Username:</label>
+                <input type="text" id="username" placeholder="Enter player name...">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="remember-username">
+                    <label for="remember-username">Remember username</label>
+                </div>
+				
+				<div class="checkbox-group" style="margin-top: 8px;">
+					<input type="checkbox" id="keep-launcher-open">
+					<label for="keep-launcher-open">Keep launcher open after launch</label>
+				</div>
+				
+				<div class="checkbox-group" style="margin-top: 8px;">
+					<input type="checkbox" id="use-segoe-font">
+					<label for="use-segoe-font">Use Segoe UI font</label>
+				</div>
+            </div>
+
+            <div class="version-section">
+                <div class="version-header">
+                    <label>Minecraft Version:</label>
+                    <button class="btn-refresh" onclick="refreshVersions()">🔄 Refresh</button>
+                </div>
+                <div id="version-select-btn" class="version-select-trigger" onclick="toggleVersionMenu()">
+                    📦 Select version...
+                </div>
+                <div id="version-dropdown" class="version-dropdown hidden">
+                    </div>
+            </div>
+
+            <p id="status">Ready.</p>
+            <div id="progress-container" class="progress-container hidden">
+                <div id="progress-bar" class="progress-bar"></div>
+            </div>
+
+            <button id="btn-play" onclick="handlePlayClick()">PLAY</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+	
+	<div id="edit-modal" class="modal-overlay hidden">
+		<div class="modal-content">
+        <h3>⚙️ EDIT PROFILE</h3>
+        
+        <div class="modal-scroll-body">
+            <div class="form-section-title">General</div>
+            <div class="form-group">
+                <label>Profile Display Name:</label>
+                <input type="text" id="edit-profile-name">
+            </div>
+
+            <div class="form-section-title">📁 Game Directory</div>
+            <div class="form-group row-group">
+                <input type="text" id="edit-game-dir">
+                <button class="btn-small btn-dark" onclick="browseGameDir()">Browse...</button>
+            </div>
+
+            <div class="form-section-title">☕ Java Runtime</div>
+            <p class="hint-text">By default, Java is selected automatically based on the Minecraft version.</p>
+            <div class="form-group checkbox-single">
+                <input type="checkbox" id="edit-java-manual" onchange="toggleJavaInputVisibility()">
+                <label for="edit-java-manual">Use a custom Java path</label>
+            </div>
+            <div class="form-group row-group">
+                <input type="text" id="edit-java-path" placeholder="Path to java.exe...">
+                <button id="btn-browse-java" class="btn-small btn-dark" onclick="browseJavaPath()">Browse...</button>
+            </div>
+
+            <div class="form-section-title">🖥️ JVM Arguments</div>
+            <div class="form-group">
+                <input type="text" id="edit-jvm-args">
+            </div>
+
+            <div class="form-section-title">🎮 Version Visibility</div>
+			<div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-snapshot"><label for="edit-allow-snapshot">🔬 Allow playing snapshot versions</label></div>
+			<div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-beta"><label for="edit-allow-beta">🧪 Allow playing Beta versions</label></div>
+			<div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-alpha"><label for="edit-allow-alpha">⚗️ Allow playing Alpha versions</label></div>
+			
+			<div class="form-section-title danger-title">⚠️ Danger Zone</div>
+            <div class="danger-box">
+                <p class="hint-text">Deleting this profile cannot be undone. Please be careful.</p>
+                
+                <div class="form-group checkbox-single">
+                    <input type="checkbox" id="delete-game-files" onchange="toggleDeleteWarning()">
+                    <label for="delete-game-files" class="danger-label">Also delete all game files (.minecraft) in this directory</label>
+                </div>
+                
+                <p id="delete-warning-text" class="hint-text warning-orange hidden">
+                    ⚠️ CRITICAL WARNING: This will permanently wipe out all worlds (Saves), resource packs, mods, and screenshots inside this folder!
+                </p>
+                
+                <button class="btn-action btn-red" onclick="removeCurrentProfile()">❌ Remove This Profile</button>
+            </div>
+		</div>
+
+			<div class="modal-footer">
+				<button class="btn-action btn-orange" onclick="openGameFolderNative()">📂 Open Folder</button>
+				<div class="right-buttons">
+					<button class="btn-action btn-gray" onclick="closeEditModal()">Cancel</button>
+					<button class="btn-action btn-blue" onclick="saveProfileSettings()">Save</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	
+</body>
+</html>
