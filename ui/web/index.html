@@ -5,129 +5,274 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kanako Launcher</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        /* ── TAB BAR — fixed top-LEFT ─────────────────────────── */
+        #tab-bar {
+            position: fixed;
+            top: 0; left: 0;
+            display: flex;
+            z-index: 300;
+        }
+        .tab-btn {
+            padding: 5px 20px;
+            font-family: 'VVMAyuMincho', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            cursor: pointer;
+            border: 2px solid #000;
+            border-bottom: 3px solid #000;
+            background: #2b2b2b;
+            color: #888;
+            text-shadow: 1px 1px 0 #000;
+            box-shadow: inset 1px 1px 0 #555, inset -1px -1px 0 #111;
+            border-radius: 0 !important;
+            transition: none;
+            user-select: none;
+        }
+        .tab-btn:hover  { color: #FFFF55; border-color: #fff; }
+        .tab-btn.active {
+            background: #1a1a1a;
+            color: #38BDF8;
+            border-bottom-color: #1a1a1a;
+            box-shadow: inset 1px 1px 0 #444, inset -1px -1px 0 #0a0a0a;
+        }
+
+        /* ── TAB PANELS ──────────────────────────────────────── */
+        /* Both panels fill the entire viewport */
+        .tab-panel {
+            display: none;
+            position: fixed;
+            inset: 0;
+        }
+        .tab-panel.active { display: block; }
+
+        /* ── GAME TAB: keep original centred layout ──────────── */
+        #tab-game .background-container {
+            width: 100%; height: 100%;
+        }
+
+        /* ── CONSOLE TAB ─────────────────────────────────────── */
+        #tab-console {
+            /* Full-screen dark overlay over the background image */
+            background-image: url('banner.png');
+            background-size: cover;
+            background-position: center;
+        }
+        /* Dim layer */
+        #tab-console::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.72);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Log text area — full screen, no card frame */
+        #console-output {
+            position: absolute;
+            /* leave room for the tab bar at top (≈28 px) */
+            top: 28px; left: 0; right: 0; bottom: 28px;
+            z-index: 1;
+            overflow-y: auto;
+            padding: 14px 20px 10px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+            /* No border, no background — text floats directly on the dimmed image */
+        }
+        .log-info  { color: #e8e8e8; }
+        .log-warn  { color: #FFD700; }
+        .log-error { color: #FF5555; }
+        .log-debug { color: #777;    }
+
+        /* Scrollbar: thin, appears only on hover, sits in right corner */
+        #console-output::-webkit-scrollbar       { width: 6px; }
+        #console-output::-webkit-scrollbar-track { background: transparent; }
+        #console-output::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0);   /* invisible by default */
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+        #console-output:hover::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.25); /* appears on hover */
+        }
+
+        /* Bottom strip: line count + clear button */
+        #console-toolbar {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 28px;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            padding: 0 14px;
+            background: rgba(0,0,0,0.55);
+            border-top: 1px solid rgba(255,255,255,0.08);
+            gap: 10px;
+        }
+        #console-line-count {
+            font-family: 'VVMAyuMincho', sans-serif;
+            font-size: 10px;
+            color: #555;
+            margin-right: auto;
+        }
+        #btn-clear-console {
+            padding: 2px 12px;
+            font-family: 'VVMAyuMincho', sans-serif;
+            font-size: 10px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            background: #2b2b2b;
+            color: #888;
+            border: 1px solid #444;
+            border-radius: 0 !important;
+            cursor: pointer;
+            box-shadow: inset 1px 1px 0 #555, inset -1px -1px 0 #111;
+        }
+        #btn-clear-console:hover { color: #FFFF55; border-color: #fff; }
+    </style>
 </head>
 <body>
-    <div class="background-container">
-        <img src="kanako-launcher.png" class="logo" alt="Logo">
 
-        <div class="card-frame">
-            <h2>KANAKO LAUNCHER</h2>
-            
-            <div class="profile-section">
-                <label>Profile:</label>
-                <select id="profile-select" onchange="handleProfileChange()">
-                    <option value="MaryProfile">MaryProfile</option>
-                </select>
-                <button class="btn-small btn-green" onclick="createNewProfile()">+ New</button>
-                <button class="btn-small btn-dark" onclick="editProfile()">⚙️ Edit</button>
-            </div>
+    <!-- ── TAB BAR (top-left) ── -->
+    <div id="tab-bar">
+        <button class="tab-btn active" id="tbtn-game"    onclick="switchTab('game')">MENU</button>
+        <button class="tab-btn"        id="tbtn-console" onclick="switchTab('console')">CONSOLE</button>
+    </div>
 
-            <div class="input-group">
-                <label>In-game Username:</label>
-                <input type="text" id="username" placeholder="Enter player name...">
-                <div class="checkbox-group">
-                    <input type="checkbox" id="remember-username">
-                    <label for="remember-username">Remember username</label>
-                </div>
-				
-				<div class="checkbox-group" style="margin-top: 8px;">
-					<input type="checkbox" id="keep-launcher-open">
-					<label for="keep-launcher-open">Keep launcher open after launch</label>
-				</div>
-				
-				<div class="checkbox-group" style="margin-top: 8px;">
-					<input type="checkbox" id="use-segoe-font">
-					<label for="use-segoe-font">Use Segoe UI font</label>
-				</div>
-            </div>
+    <!-- ══════════════ GAME TAB ══════════════ -->
+    <div class="tab-panel active" id="tab-game">
+        <div class="background-container">
+            <img src="kanako-launcher.png" class="logo" alt="Logo">
 
-            <div class="version-section">
-                <div class="version-header">
-                    <label>Minecraft Version:</label>
-                    <button class="btn-refresh" onclick="refreshVersions()">🔄 Refresh</button>
+            <div class="card-frame">
+                <h2>KANAKO LAUNCHER</h2>
+
+                <div class="profile-section">
+                    <label>Profile:</label>
+                    <select id="profile-select" onchange="handleProfileChange()">
+                        <option value="MaryProfile">MaryProfile</option>
+                    </select>
+                    <button class="btn-small btn-green" onclick="createNewProfile()">+ New</button>
+                    <button class="btn-small btn-dark"  onclick="editProfile()">⚙️ Edit</button>
                 </div>
-                <div id="version-select-btn" class="version-select-trigger" onclick="toggleVersionMenu()">
-                    📦 Select version...
-                </div>
-                <div id="version-dropdown" class="version-dropdown hidden">
+
+                <div class="input-group">
+                    <label>In-game Username:</label>
+                    <input type="text" id="username" placeholder="Enter player name...">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="remember-username">
+                        <label for="remember-username">Remember username</label>
                     </div>
+                    <div class="checkbox-group" style="margin-top:8px;">
+                        <input type="checkbox" id="keep-launcher-open">
+                        <label for="keep-launcher-open">Keep launcher open after launch</label>
+                    </div>
+                    <div class="checkbox-group" style="margin-top:8px;">
+                        <input type="checkbox" id="use-segoe-font">
+                        <label for="use-segoe-font">Use Segoe UI font</label>
+                    </div>
+                </div>
+
+                <div class="version-section">
+                    <div class="version-header">
+                        <label>Minecraft Version:</label>
+                        <button class="btn-refresh" onclick="refreshVersions()">🔄 Refresh</button>
+                    </div>
+                    <div id="version-select-btn" class="version-select-trigger" onclick="toggleVersionMenu()">
+                        📦 Select version...
+                    </div>
+                    <div id="version-dropdown" class="version-dropdown hidden"></div>
+                </div>
+
+                <p id="status">Ready.</p>
+                <div id="progress-container" class="progress-container hidden">
+                    <div id="progress-bar" class="progress-bar"></div>
+                </div>
+
+                <button id="btn-play" onclick="handlePlayClick()">PLAY</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════ CONSOLE TAB ══════════════ -->
+    <div class="tab-panel" id="tab-console">
+        <div id="console-output"><span class="log-info">[INFO] Kanako Launcher console ready.</span>
+</div>
+        <div id="console-toolbar">
+            <span id="console-line-count">1 line</span>
+            <button id="btn-clear-console" onclick="clearConsole()">🗑 Clear</button>
+        </div>
+    </div>
+
+    <!-- ══════════════ EDIT PROFILE MODAL ══════════════ -->
+    <div id="edit-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3>⚙️ EDIT PROFILE</h3>
+            <div class="modal-scroll-body">
+                <div class="form-section-title">General</div>
+                <div class="form-group">
+                    <label>Profile Display Name:</label>
+                    <input type="text" id="edit-profile-name">
+                </div>
+
+                <div class="form-section-title">📁 Game Directory</div>
+                <div class="form-group row-group">
+                    <input type="text" id="edit-game-dir">
+                    <button class="btn-small btn-dark" onclick="browseGameDir()">Browse...</button>
+                </div>
+
+                <div class="form-section-title">☕ Java Runtime</div>
+                <p class="hint-text">By default, Java is selected automatically based on the Minecraft version.</p>
+                <div class="form-group checkbox-single">
+                    <input type="checkbox" id="edit-java-manual" onchange="toggleJavaInputVisibility()">
+                    <label for="edit-java-manual">Use a custom Java path</label>
+                </div>
+                <div class="form-group row-group">
+                    <input type="text" id="edit-java-path" placeholder="Path to java.exe...">
+                    <button id="btn-browse-java" class="btn-small btn-dark" onclick="browseJavaPath()">Browse...</button>
+                </div>
+
+                <div class="form-section-title">🖥️ JVM Arguments</div>
+                <div class="form-group">
+                    <input type="text" id="edit-jvm-args">
+                </div>
+
+                <div class="form-section-title">🎮 Version Visibility</div>
+                <div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-snapshot"><label for="edit-allow-snapshot">🔬 Allow playing snapshot versions</label></div>
+                <div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-beta"><label for="edit-allow-beta">🧪 Allow playing Beta versions</label></div>
+                <div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-alpha"><label for="edit-allow-alpha">⚗️ Allow playing Alpha versions</label></div>
+
+                <div class="form-section-title danger-title">⚠️ Danger Zone</div>
+                <div class="danger-box">
+                    <p class="hint-text">Deleting this profile cannot be undone. Please be careful.</p>
+                    <div class="form-group checkbox-single">
+                        <input type="checkbox" id="delete-game-files" onchange="toggleDeleteWarning()">
+                        <label for="delete-game-files" class="danger-label">Also delete all game files (.minecraft) in this directory</label>
+                    </div>
+                    <p id="delete-warning-text" class="hint-text warning-orange hidden">
+                        ⚠️ CRITICAL WARNING: This will permanently wipe out all worlds (Saves), resource packs, mods, and screenshots inside this folder!
+                    </p>
+                    <button class="btn-action btn-red" onclick="removeCurrentProfile()">❌ Remove This Profile</button>
+                </div>
             </div>
 
-            <p id="status">Ready.</p>
-            <div id="progress-container" class="progress-container hidden">
-                <div id="progress-bar" class="progress-bar"></div>
+            <div class="modal-footer">
+                <button class="btn-action btn-orange" onclick="openGameFolderNative()">📂 Open Folder</button>
+                <div class="right-buttons">
+                    <button class="btn-action btn-gray"  onclick="closeEditModal()">Cancel</button>
+                    <button class="btn-action btn-blue"  onclick="saveProfileSettings()">Save</button>
+                </div>
             </div>
-
-            <button id="btn-play" onclick="handlePlayClick()">PLAY</button>
         </div>
     </div>
 
     <script src="app.js"></script>
-	
-	<div id="edit-modal" class="modal-overlay hidden">
-		<div class="modal-content">
-        <h3>⚙️ EDIT PROFILE</h3>
-        
-        <div class="modal-scroll-body">
-            <div class="form-section-title">General</div>
-            <div class="form-group">
-                <label>Profile Display Name:</label>
-                <input type="text" id="edit-profile-name">
-            </div>
-
-            <div class="form-section-title">📁 Game Directory</div>
-            <div class="form-group row-group">
-                <input type="text" id="edit-game-dir">
-                <button class="btn-small btn-dark" onclick="browseGameDir()">Browse...</button>
-            </div>
-
-            <div class="form-section-title">☕ Java Runtime</div>
-            <p class="hint-text">By default, Java is selected automatically based on the Minecraft version.</p>
-            <div class="form-group checkbox-single">
-                <input type="checkbox" id="edit-java-manual" onchange="toggleJavaInputVisibility()">
-                <label for="edit-java-manual">Use a custom Java path</label>
-            </div>
-            <div class="form-group row-group">
-                <input type="text" id="edit-java-path" placeholder="Path to java.exe...">
-                <button id="btn-browse-java" class="btn-small btn-dark" onclick="browseJavaPath()">Browse...</button>
-            </div>
-
-            <div class="form-section-title">🖥️ JVM Arguments</div>
-            <div class="form-group">
-                <input type="text" id="edit-jvm-args">
-            </div>
-
-            <div class="form-section-title">🎮 Version Visibility</div>
-			<div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-snapshot"><label for="edit-allow-snapshot">🔬 Allow playing snapshot versions</label></div>
-			<div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-beta"><label for="edit-allow-beta">🧪 Allow playing Beta versions</label></div>
-			<div class="form-group checkbox-single"><input type="checkbox" id="edit-allow-alpha"><label for="edit-allow-alpha">⚗️ Allow playing Alpha versions</label></div>
-			
-			<div class="form-section-title danger-title">⚠️ Danger Zone</div>
-            <div class="danger-box">
-                <p class="hint-text">Deleting this profile cannot be undone. Please be careful.</p>
-                
-                <div class="form-group checkbox-single">
-                    <input type="checkbox" id="delete-game-files" onchange="toggleDeleteWarning()">
-                    <label for="delete-game-files" class="danger-label">Also delete all game files (.minecraft) in this directory</label>
-                </div>
-                
-                <p id="delete-warning-text" class="hint-text warning-orange hidden">
-                    ⚠️ CRITICAL WARNING: This will permanently wipe out all worlds (Saves), resource packs, mods, and screenshots inside this folder!
-                </p>
-                
-                <button class="btn-action btn-red" onclick="removeCurrentProfile()">❌ Remove This Profile</button>
-            </div>
-		</div>
-
-			<div class="modal-footer">
-				<button class="btn-action btn-orange" onclick="openGameFolderNative()">📂 Open Folder</button>
-				<div class="right-buttons">
-					<button class="btn-action btn-gray" onclick="closeEditModal()">Cancel</button>
-					<button class="btn-action btn-blue" onclick="saveProfileSettings()">Save</button>
-				</div>
-			</div>
-		</div>
-	</div>
-	
 </body>
 </html>

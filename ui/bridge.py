@@ -4,6 +4,7 @@ import threading
 import minecraft_launcher_lib
 import shutil
 import json
+import webview
 
 from core.config_manager import ConfigManager
 from core.game_runner import run_launch_process
@@ -15,6 +16,9 @@ class LauncherBridgeAPI:
         self._version_manager = None
         self._window = None
         self._versions_ready = False
+        
+        # SỬA TẠI ĐÂY: Khởi tạo set để lưu các phiên bản đã quét JSON ổn định
+        self._sanitized_versions = set() 
         
         # CHẠY LUỒNG NGẦM: Tải danh sách phiên bản từ Mojang mà không làm treo giao diện
         threading.Thread(target=self._async_load_versions, daemon=True).start()
@@ -168,9 +172,63 @@ class LauncherBridgeAPI:
 
             # 3. KHỞI CHẠY THREAD VỚI ĐỐI SỐ THỨ HAI LÀ DICT 'prof_data'
             # Lỗi cũ của bạn có thể là đã truyền biến 'version' (String) vào đây
+            # 3. KHỞI CHẠY THREAD VỚI ĐẦY ĐỦ CÁC THAM SỐ YÊU CẦU
+            # Ví dụ cấu hình trong ui/bridge.py của bạn:
+            log_state = {"last_level": "info"}
+
+            def game_log_cb(line):
+                stripped = line.strip()
+                if not stripped:
+                    return
+
+                # Kiểm tra xem dòng này có phải là phần tiếp diễn của một cụm lỗi Java Stack Trace không
+                is_stack_continuation = (
+                    line.startswith("\tat ") or 
+                    line.lstrip().startswith("at ") or
+                    stripped.startswith("Caused by:") or
+                    stripped.startswith("...")  # Trường hợp "... X more" ở cuối lỗi Java
+                )
+
+                # Phân tích cấp độ lỗi (Level) dựa trên định dạng Log4j của Minecraft
+                level = "info"
+                if "/ERROR]" in stripped or "/FATAL]" in stripped or "Exception in thread" in stripped:
+                    level = "error"
+                elif "/WARN]" in stripped:
+                    level = "warn"
+                elif "/DEBUG]" in stripped:
+                    level = "debug"
+                elif is_stack_continuation:
+                    # Nếu là dòng cấu trúc của lỗi, ép buộc nó phải là màu đỏ (error)
+                    level = "error"
+                elif log_state["last_level"] == "error" and not stripped.startswith("["):
+                    # Nếu dòng trước đó là lỗi, và dòng này là chữ tự do (không có thẻ [thời gian] của Minecraft)
+                    # thì đây chính là dòng tiêu đề Exception (Ví dụ: java.lang.NullPointerException)
+                    level = "error"
+                else:
+                    level = "info"
+
+                # Lưu lại trạng thái level phục vụ cho dòng log tiếp theo
+                log_state["last_level"] = level
+
+                # 2. ĐỊNH DẠNG HÌNH THỨC HIỂN THỊ TRÊN CONSOLE
+                if is_stack_continuation or (level == "error" and not stripped.startswith("[")):
+                    # KHỐI LỖI HỆ THỐNG: Giữ nguyên văn bản gốc (bao gồm khoảng thụt lề), KHÔNG chèn [GAME]
+                    display_msg = line
+                else:
+                    # LOG THÔNG THƯỜNG: Chèn tiền tố [GAME] phân biệt với log của Launcher
+                    display_msg = f"[GAME] {line}"
+
+                # Đẩy dữ liệu sạch lên giao diện Web UI
+                self.console_log(display_msg, level)
+
             threading.Thread(
                 target=run_launch_process,
-                args=(username, prof_data, status_cb, progress_cb, btn_cb, success_cb),
+                args=(
+                    username, prof_data, status_cb, progress_cb, btn_cb, success_cb, 
+                    self._sanitized_versions, 
+                    game_log_cb,  # <-- Truyền hàm nhận log vào tham số thứ 8 này
+                    None
+                ),
                 daemon=True
             ).start()
 
@@ -320,3 +378,23 @@ class LauncherBridgeAPI:
         except Exception as e:
             print(f"[Bridge Error] Lỗi nghiêm trọng khi thực hiện lệnh xóa profile: {e}")
             raise e
+    # ------------------------------------------------------------------
+    # Console helper — push a line to the JS console tab
+    # ------------------------------------------------------------------
+
+    def console_log(self, message: str, level: str = "info"):
+        """
+        Push a single log line to the Console tab in the UI.
+        level: "info" | "warn" | "error" | "debug"
+        Safe to call at any time; silently ignored if the window is not ready.
+        """
+        if not self._window:
+            return
+        safe_levels = {"info", "warn", "error", "debug"}
+        lvl = level.lower() if level.lower() in safe_levels else "info"
+        safe_msg = json.dumps(str(message))
+        safe_lvl = json.dumps(lvl)
+        try:
+            self._window.evaluate_js(f"appendLog({safe_msg}, {safe_lvl})")
+        except Exception:
+            pass   # window not ready yet or JS error — never crash the Python thread

@@ -437,3 +437,34 @@ button:active, .btn-small:active, .btn-action:active, .version-select-trigger:ac
 .version-dropdown::-webkit-scrollbar-thumb:hover {
     background: #6e6e6e; /* Sáng lên một chút khi di chuột vào */
 }
+
+/* ==========================================================================
+   CẤU HÌNH CHO KHUNG CONSOLE LOG
+   ========================================================================== */
+
+/* 1. Giải quyết Yêu cầu 1: Cho phép bôi đen và copy log */
+#console-output {
+    user-select: text !important;
+    -webkit-user-select: text !important; /* Hỗ trợ các web engine trên một số hệ điều hành */
+    
+    /* Mẹo quan trọng: Biến các dấu xuống dòng \n thừa ở ngoài thẻ span do JS tạo ra thành khoảng trắng vô hại,
+       tránh bị lỗi nhân đôi dòng trống khi chuyển span sang dạng block */
+    white-space: normal !important; 
+}
+
+/* 2. Giải quyết Yêu cầu 2: Thụt lề dòng khi log quá dài tự động xuống hàng (Hanging Indent) */
+#console-output span {
+    display: block;                   /* Chuyển span thành khối (block) để có thể áp dụng luật thụt lề */
+    white-space: pre-wrap;            /* Giữ nguyên định dạng xuống dòng tự nhiên của text bên trong log */
+    overflow-wrap: anywhere;          /* Giúp các chuỗi dài (như đường dẫn file, URL) tự bẻ dòng khi hết khung */
+    
+    /* Kỹ thuật Hanging Indent (Thụt lề dòng thứ 2 trở đi) */
+    padding-left: 2.5rem;             /* Đẩy toàn bộ khối log lùi vào một khoảng (khoảng 1 tab hoặc tùy chỉnh theo ý bạn) */
+    text-indent: -2.5rem;             /* Kéo riêng dòng đầu tiên quay ngược trở lại sát lề trái ban đầu */
+}
+
+/* Định dạng riêng cho dòng phụ / Java Stack Trace */
+#console-output span.log-continuation {
+    text-indent: 0 !important;   /* Hủy bỏ việc kéo giật lùi dòng về phía bên trái */
+    padding-left: 3.5rem;        /* Thụt lề sâu hẳn vào trong để tạo phân cấp khối lỗi rõ ràng */
+}
