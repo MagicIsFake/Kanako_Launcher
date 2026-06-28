@@ -42,9 +42,9 @@ def get_suitable_java(version_str: str, prof_data: dict) -> str:
     return fallback if fallback else hardcoded
 
 
-def sanitize_version_json(version: str, game_dir: str):
-    """Rewrite the version JSON in-place to fix non-standard argument keys."""
-    json_path = os.path.join(game_dir, "versions", version, f"{version}.json")
+def sanitize_version_json(version: str, minecraft_dir: str):
+    """Scan and fix mod-loader argument quirks inside a .minecraft directory."""
+    json_path = os.path.join(minecraft_dir, "versions", version, f"{version}.json")
     if not os.path.exists(json_path):
         return
     try:
@@ -69,24 +69,66 @@ def sanitize_version_json(version: str, game_dir: str):
         print(f"[JSON Scan] Error: {e}")
 
 
+def _bootstrap_minecraft_dir(minecraft_dir: str):
+    """
+    Pre-create the sub-folders Minecraft expects inside a .minecraft directory.
+
+    Minecraft writes into these paths relative to --gameDir.  If they do not
+    exist on first launch, some versions (especially modded ones) silently
+    fall back to the OS-default location (%APPDATA%\\.minecraft on Windows).
+    Creating them here guarantees the game stays inside its own directory.
+    """
+    subdirs = [
+        "saves", "resourcepacks", "shaderpacks",
+        "mods", "config", "screenshots", "logs", "crash-reports",
+    ]
+    for sub in subdirs:
+        os.makedirs(os.path.join(minecraft_dir, sub), exist_ok=True)
+
+
 def run_launch_process(username: str, current_prof: dict,
                        status_cb, progress_cb, btn_cb, success_cb,
                        sanitized_versions: set, log_cb=None, post_install_cb=None):
     """
-    Runs on a background thread.
-    SỬA ĐỔI: Bổ sung log_cb để truyền log game về giao diện UI.
+    Launch Minecraft in fully self-contained, per-profile mode.
+
+    Architecture
+    ────────────
+    Each profile owns one directory that acts as a complete, independent
+    .minecraft folder — it holds versions, assets, libraries, saves, mods,
+    resourcepacks, and options.txt all in one place.
+
+    profile["game_dir"]  IS  the .minecraft dir for that profile.
+    It is passed as BOTH:
+        • the minecraft_dir argument to install_minecraft_version()
+          → so versions/assets/libraries are downloaded there
+        • the minecraft_dir argument to get_minecraft_command()
+          → so the JVM classpath resolves from there
+        • the "gameDirectory" option
+          → so --gameDir points there and all runtime writes land there
+
+    This means every profile is 100 % self-sufficient and completely
+    independent of every other profile and of %APPDATA%\\.minecraft.
+
+    Special case — Default profile
+    ──────────────────────────────
+    The Default profile's game_dir is initialised to the OS-default Minecraft
+    directory (%APPDATA%\\.minecraft on Windows).  This lets users who already
+    have Mojang's launcher installed pick up their existing worlds and mods
+    immediately without any configuration.  If they later point it at a
+    different folder it becomes just as independent as any other profile.
     """
-    version  = current_prof["version"]
-    game_dir = current_prof["game_dir"]
-    java_path = get_suitable_java(version, current_prof)
+    version      = current_prof["version"]
+    minecraft_dir = current_prof["game_dir"]   # this IS the .minecraft dir
+    java_path    = get_suitable_java(version, current_prof)
 
-    os.makedirs(game_dir, exist_ok=True)
+    os.makedirs(minecraft_dir, exist_ok=True)
 
-    # ------------------------------------------------------------------
-    # SỬA TẠI ĐÂY (1): Khởi tạo biến 'options' ngay đầu hàm để tránh lỗi UnboundLocalError
-    # ------------------------------------------------------------------
-    player_uuid  = str(uuid.uuid3(uuid.NAMESPACE_DNS, username))
-    dummy_token  = str(uuid.uuid4())
+    # Pre-create expected sub-folders so the game never falls back to AppData
+    _bootstrap_minecraft_dir(minecraft_dir)
+
+    player_uuid = str(uuid.uuid3(uuid.NAMESPACE_DNS, username))
+    dummy_token = str(uuid.uuid4())
 
     options = {
         "username":       username,
@@ -94,8 +136,9 @@ def run_launch_process(username: str, current_prof: dict,
         "token":          dummy_token,
         "jvmArguments":   current_prof["jvm_args"].split(),
         "executablePath": java_path,
-        "gameDirectory":  game_dir,
-        "extraArguments": ["--gameDir", game_dir],
+        # gameDirectory == minecraft_dir: all three roles (classpath root,
+        # asset root, and --gameDir runtime flag) resolve to the same place.
+        "gameDirectory":  minecraft_dir,
     }
 
     status_cb(f"Checking/downloading {version}...", "orange")
@@ -119,56 +162,50 @@ def run_launch_process(username: str, current_prof: dict,
         "setMax":      set_max,
     }
 
-    # Tiến hành cài đặt game
+    # Download/verify versions, assets, libraries into this profile's own dir
     try:
         minecraft_launcher_lib.install.install_minecraft_version(
-            version, game_dir, callback=launcher_callback
+            version, minecraft_dir, callback=launcher_callback
         )
         if post_install_cb:
-            post_install_cb(game_dir)
+            post_install_cb(minecraft_dir)
     except Exception as e:
         print(f"[Install Error] {e}")
 
     progress_cb(1.0)
 
-    # Chuẩn hóa cấu hình JSON nếu cần
+    # Fix mod-loader JSON quirks inside this profile's own versions/ folder
     if version not in sanitized_versions:
-        sanitize_version_json(version, game_dir)
+        sanitize_version_json(version, minecraft_dir)
         sanitized_versions.add(version)
 
-    # Tiến hành khởi chạy game và bắt log
     try:
-        mc_command = minecraft_launcher_lib.command.get_minecraft_command(version, game_dir, options)
+        # All paths in the command (classpath, natives, assets) resolve from
+        # minecraft_dir — the same directory --gameDir points to.
+        mc_command = minecraft_launcher_lib.command.get_minecraft_command(
+            version, minecraft_dir, options
+        )
 
-        # ------------------------------------------------------------------
-        # SỬA TẠI ĐÂY (2): Thay đổi popen_kwargs để bắt luồng Standard Output/Error
-        # ------------------------------------------------------------------
         popen_kwargs: dict = {
-            "cwd": game_dir, 
-            "stdout": subprocess.PIPE,       # Hứng luồng log chuẩn của game
-            "stderr": subprocess.STDOUT,     # Gộp luồng lỗi vào chung luồng log
-            "text": True,                    # Đọc dạng String văn bản thay vì Bytes
-            "encoding": "utf-8",             # Tránh lỗi font ký tự lạ
-            "errors": "replace"
+            "cwd":      minecraft_dir,   # working dir = profile's .minecraft
+            "stdout":   subprocess.PIPE,
+            "stderr":   subprocess.STDOUT,
+            "text":     True,
+            "encoding": "utf-8",
+            "errors":   "replace",
         }
-        
+
         if platform.system() == "Windows":
-            # Ẩn cửa sổ cmd đen xì của Java bật kèm (nếu có)
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            popen_kwargs["startupinfo"] = startupinfo
-            # Tạo nhóm tiến trình mới độc lập để khi tắt launcher game không bị tắt theo (nếu chọn giữ mở launcher)
+            popen_kwargs["startupinfo"]   = startupinfo
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
-        # Chạy tiến trình game
         process = subprocess.Popen(mc_command, **popen_kwargs)
-        
+
         status_cb("Launched successfully! Have fun.", "green")
         success_cb()
 
-        # ------------------------------------------------------------------
-        # SỬA TẠI ĐÂY (3): Vòng lặp đọc log liên tục từ Game truyền ra UI Console
-        # ------------------------------------------------------------------
         if log_cb and process.stdout:
             for line in process.stdout:
                 log_cb(line.strip())

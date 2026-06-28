@@ -12,7 +12,7 @@ DEFAULT_JVM_ARGS = (
 )
 
 JAVA_PATHS = {
-    8:  r"C:\Program Files\Java\jre1.8.0_491\bin\java.exe",
-    17: r"C:\Program Files\Java\jdk-17\bin\java.exe",
-    21: r"C:\Program Files\Java\jdk-21\bin\java.exe",
+    8:  r"C:\Program Files\Java\jre1.8.0_491\bin\javaw.exe",
+    17: r"C:\Program Files\Java\jdk-17\bin\javaw.exe",
+    21: r"C:\Program Files\Java\jdk-21\bin\javaw.exe",
 }

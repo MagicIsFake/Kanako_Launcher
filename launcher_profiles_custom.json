@@ -1,0 +1,31 @@
+{
+    "current_profile": "AliceTesting",
+    "profiles": {
+        "Default": {
+            "name": "Default",
+            "username": "",
+            "remember": false,
+            "version": "1.20.1",
+            "game_dir": "D:\\Game\\Own_Launcher\\Kanako_Launcher\\kanako_storage\\instances\\Default",
+            "jvm_args": "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M",
+            "java_path": "",
+            "java_manual": false,
+            "allow_snapshots": false,
+            "allow_beta": false,
+            "allow_alpha": false
+        },
+        "AliceTesting": {
+            "name": "AliceTesting",
+            "username": "Yobithia",
+            "remember": true,
+            "version": "1.21.1",
+            "game_dir": "D:\\Game\\neoforge_testing_mod\\.minecraft",
+            "jvm_args": "-Xmx8G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M",
+            "java_path": "",
+            "java_manual": false,
+            "allow_snapshots": false,
+            "allow_beta": false,
+            "allow_alpha": false
+        }
+    }
+}
