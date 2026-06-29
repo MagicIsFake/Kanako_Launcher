@@ -14,7 +14,6 @@ window.updateStatus = function(message, color) {
     const el = document.getElementById("status");
     if (el) { el.innerText = message; el.style.color = color; }
 
-    // Mirror every status update to the console tab with the right level
     const level = (color === "#E74C3C" || color === "red")    ? "error"
                 : (color === "#E67E22" || color === "orange")  ? "warn"
                 : "info";
@@ -47,14 +46,12 @@ function switchTab(name) {
 // 3. CONSOLE LOGGING
 // ==========================================
 
-let _consoleLineCount = 1; // starts at 1 (the "ready" line in HTML)
+let _consoleLineCount = 1;
 
-// appendLog is the single public function Python calls via evaluate_js
 function appendLog(text, level) {
     const box = document.getElementById("console-output");
     if (!box) return;
 
-    // Tự động phân loại nếu thiếu level
     if (!level) {
         const t = text.toUpperCase();
         level = t.includes("[ERROR]") || t.includes("[CRITICAL]") ? "error"
@@ -65,14 +62,9 @@ function appendLog(text, level) {
 
     const span = document.createElement("span");
     span.className = "log-" + level;
-    
-    // 🔥 BỔ SUNG: Kiểm tra xem có phải dòng tiếp diễn/Stack Trace không
-    // Nếu dòng sau khi bỏ khoảng trắng đầu/cuối mà KHÔNG bắt đầu bằng '[',
-    // chứng tỏ đây là dòng Stack Trace của Java hoặc dòng phụ.
     if (!text.trim().startsWith("[")) {
         span.classList.add("log-continuation");
     }
-
     span.textContent = text;
     box.appendChild(span);
     box.appendChild(document.createTextNode("\n"));
@@ -82,7 +74,6 @@ function appendLog(text, level) {
     if (counter) counter.textContent =
         _consoleLineCount === 1 ? "1 line" : _consoleLineCount + " lines";
 
-    // Auto-scroll
     if (box.scrollTop + box.clientHeight >= box.scrollHeight - 60) {
         box.scrollTop = box.scrollHeight;
     }
@@ -104,13 +95,8 @@ function initializeLauncher() {
     if (!window.pywebview || !window.pywebview.api) return;
 
     return window.pywebview.api.get_initial_data().then(data => {
-        // 4.1  Profile dropdown
-        const profileSelect = document.getElementById("profile-select");
-        if (profileSelect && data.profiles_list) {
-            profileSelect.innerHTML = data.profiles_list.map(p =>
-                `<option value="${p}" ${p === data.current_profile ? "selected" : ""}>${p}</option>`
-            ).join("");
-        }
+        // 4.1  Rebuild profile dropdown and select the active profile
+        _rebuildProfileDropdown(data.profiles_list, data.current_profile);
 
         // 4.2  Username + remember checkbox
         const txtUsername = document.getElementById("username");
@@ -146,6 +132,19 @@ function initializeLauncher() {
     });
 }
 
+/**
+ * Rebuild the profile <select> with a fresh list and select the given profile.
+ * Kept as a standalone helper so saveProfileSettings, createNewProfile, and
+ * removeCurrentProfile can all use it without calling full initializeLauncher.
+ */
+function _rebuildProfileDropdown(profilesList, activeProfile) {
+    const profileSelect = document.getElementById("profile-select");
+    if (!profileSelect || !profilesList) return;
+    profileSelect.innerHTML = profilesList
+        .map(p => `<option value="${p}" ${p === activeProfile ? "selected" : ""}>${p}</option>`)
+        .join("");
+}
+
 function _initCheckboxFromStorage(elementId, storageKey, defaultValue) {
     const chk = document.getElementById(elementId);
     if (!chk) return;
@@ -154,7 +153,6 @@ function _initCheckboxFromStorage(elementId, storageKey, defaultValue) {
     chk.onchange = function() { localStorage.setItem(storageKey, this.checked); };
 }
 
-// Anti-race: run init as soon as pywebview is ready
 if (window.pywebview) {
     initializeLauncher();
 } else {
@@ -254,6 +252,7 @@ function handleProfileChange() {
     window.updateStatus(`Switching to profile: ${selectedProfile}...`, "#94a3b8");
 
     window.pywebview.api.switch_profile(selectedProfile).then(data => {
+        if (!data) return;
         const txtUsername = document.getElementById("username");
         const chkRemember = document.getElementById("remember-username");
         if (txtUsername) txtUsername.value   = data.profile_data.username || "";
@@ -274,7 +273,9 @@ async function createNewProfile() {
     try {
         window.updateStatus("Creating new profile...", "#94a3b8");
         const newProfileName = await window.pywebview.api.web_create_profile();
+        // Full reinit so the dropdown and all fields are in sync
         await initializeLauncher();
+        // Then select the newly created profile in the dropdown
         const profileSelect = document.getElementById("profile-select");
         if (profileSelect) profileSelect.value = newProfileName;
         _initCheckboxFromStorage("keep-launcher-open", "keepLauncherOpen", false);
@@ -285,14 +286,24 @@ async function createNewProfile() {
     }
 }
 
+// Tracks the key used to open the modal so we can pass it to Python on save.
+// Updated to the NEW name after a successful rename so the edit button works
+// again without reopening the launcher.
 let currentEditingOldId = "";
 
 function editProfile() {
     const profileSelect = document.getElementById("profile-select");
     if (!profileSelect) return;
+
+    // Always read the current dropdown value — after a rename the dropdown
+    // already shows the new name (we update it on save), so this is correct.
     currentEditingOldId = profileSelect.value;
 
     window.pywebview.api.get_profile_details(currentEditingOldId).then(prof => {
+        if (!prof) {
+            appendLog("[ERROR] editProfile: profile not found — " + currentEditingOldId, "error");
+            return;
+        }
         document.getElementById("edit-profile-name").value     = prof.name      || currentEditingOldId;
         document.getElementById("edit-game-dir").value         = prof.game_dir  || "";
         document.getElementById("edit-jvm-args").value         = prof.jvm_args  || "";
@@ -341,7 +352,7 @@ function openGameFolderNative() {
     window.pywebview.api.web_open_folder(path);
 }
 
-function saveProfileSettings() {
+async function saveProfileSettings() {
     const newName       = document.getElementById("edit-profile-name").value.trim();
     const gameDir       = document.getElementById("edit-game-dir").value.trim();
     const jvmArgs       = document.getElementById("edit-jvm-args").value.trim();
@@ -351,27 +362,55 @@ function saveProfileSettings() {
     const allowBeta     = document.getElementById("edit-allow-beta").checked;
     const allowAlpha    = document.getElementById("edit-allow-alpha").checked;
 
+    // The effective new name (falls back to old if left blank)
+    const resolvedName = newName || currentEditingOldId;
+
     window.updateStatus("Saving profile settings...", "#94a3b8");
 
-    window.pywebview.api.web_save_profile(
-        currentEditingOldId, newName, gameDir, jvmArgs,
-        javaManual, javaPath, allowSnapshot, allowBeta, allowAlpha
-    ).then(() => {
+    try {
+        await window.pywebview.api.web_save_profile(
+            currentEditingOldId, newName, gameDir, jvmArgs,
+            javaManual, javaPath, allowSnapshot, allowBeta, allowAlpha
+        );
+
+        // FIX 1: Update currentEditingOldId to the new name immediately so
+        // the edit button works again without a launcher restart.
+        currentEditingOldId = resolvedName;
+
         closeEditModal();
-        return window.pywebview.api.switch_profile(newName || currentEditingOldId);
-    }).then(data => {
+
+        // FIX 2: Ask Python for the fresh profile list and rebuild the
+        // dropdown — this is the only place that was missing after a rename.
+        const data = await window.pywebview.api.switch_profile(resolvedName);
         if (data) {
+            // Rebuild the dropdown with the updated list and select new name
+            _rebuildProfileDropdown(
+                await _fetchProfilesList(),
+                resolvedName
+            );
+
             const txtUsername = document.getElementById("username");
             const chkRemember = document.getElementById("remember-username");
             if (txtUsername) txtUsername.value   = data.profile_data.username || "";
             if (chkRemember) chkRemember.checked = data.profile_data.remember || false;
             if (data.versions_ready) renderVersions(data.versions, data.profile_data.version);
         }
+
         window.updateStatus("Profile saved successfully!", "#2ECC71");
-    }).catch(err => {
+
+    } catch (err) {
         appendLog("[ERROR] saveProfileSettings: " + err, "error");
         window.updateStatus("Error saving profile!", "#E74C3C");
-    });
+    }
+}
+
+/**
+ * Fetch the current profiles list from Python without doing a full reinit.
+ * Used after save so we can rebuild just the dropdown.
+ */
+async function _fetchProfilesList() {
+    const data = await window.pywebview.api.get_initial_data();
+    return data ? data.profiles_list : [];
 }
 
 // ==========================================
@@ -384,7 +423,7 @@ function toggleDeleteWarning() {
     warningText.classList.toggle("hidden", !isChecked);
 }
 
-function removeCurrentProfile() {
+async function removeCurrentProfile() {
     if (!currentEditingOldId) return;
     const deleteFiles = document.getElementById("delete-game-files").checked;
     let confirmMsg = `Are you sure you want to completely REMOVE the profile "${currentEditingOldId}"?`;
@@ -392,17 +431,26 @@ function removeCurrentProfile() {
     if (!confirm(confirmMsg)) return;
 
     window.updateStatus("Processing profile removal...", "#94a3b8");
-    window.pywebview.api.web_remove_profile(currentEditingOldId, deleteFiles)
-        .then(() => {
-            closeEditModal();
-            return initializeLauncher();
-        })
-        .then(() => handleProfileChange())
-        .catch(err => {
-            appendLog("[ERROR] removeCurrentProfile: " + err, "error");
-            window.updateStatus("Error trying to remove profile!", "#E74C3C");
-        });
-    window.updateStatus("Profile removed successfully!", "#E74C3C");
+
+    try {
+        // FIX 3: await the removal before doing anything else — previously
+        // the success status was set synchronously before the promise resolved,
+        // and handleProfileChange fired before the dropdown was rebuilt.
+        await window.pywebview.api.web_remove_profile(currentEditingOldId, deleteFiles);
+        closeEditModal();
+        currentEditingOldId = "";
+
+        // Full reinit rebuilds the dropdown with the surviving profiles
+        await initializeLauncher();
+
+        // Now it's safe to trigger profile-change logic on whatever is selected
+        handleProfileChange();
+
+        window.updateStatus("Profile removed successfully!", "#E74C3C");
+    } catch (err) {
+        appendLog("[ERROR] removeCurrentProfile: " + err, "error");
+        window.updateStatus("Error trying to remove profile!", "#E74C3C");
+    }
 }
 
 // ==========================================

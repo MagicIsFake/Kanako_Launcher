@@ -7,16 +7,24 @@ from constants import DEFAULT_JVM_ARGS
 
 class ConfigManager:
     def __init__(self):
-        launcher_root = os.getcwd()
+        # 1. Lấy thư mục mẹ của .minecraft tiêu chuẩn
+        # Trên Windows: C:\Users\Tên_User\AppData\Roaming\.minecraft
+        # Trên Linux: /home/tên_user/.minecraft
+        standard_minecraft_dir = minecraft_launcher_lib.utils.get_minecraft_directory()
+        system_appdata_dir = os.path.dirname(standard_minecraft_dir)
 
-        # Launcher config file lives next to the launcher executable
-        self.config_file = os.path.join(launcher_root, "launcher_profiles_custom.json")
+        # 2. Tạo một thư mục riêng cho Launcher của bạn nằm trong AppData
+        # Bạn nên thêm dấu chấm "." ở đầu tên thư mục để nó tự ẩn đi trên Linux/macOS
+        self.launcher_root = os.path.join(system_appdata_dir, ".kanako_launcher")
+        
+        # Đảm bảo thư mục launcher gốc này luôn tồn tại
+        os.makedirs(self.launcher_root, exist_ok=True)
 
-        # The OS-default Minecraft directory (%APPDATA%\.minecraft on Windows,
-        # ~/.minecraft on Linux/macOS).  Used as the initial game_dir for the
-        # Default profile so players who already use Mojang's launcher can
-        # access their existing worlds and mods immediately.
-        self.default_minecraft_dir = minecraft_launcher_lib.utils.get_minecraft_directory()
+        # 3. Định nghĩa lại file config_file nằm trong thư mục AppData mới này
+        self.config_file = os.path.join(self.launcher_root, "launcher_profiles_custom.json")
+
+        # Lưu lại đường dẫn .minecraft gốc để dùng làm fallback nếu cần
+        self.default_minecraft_dir = standard_minecraft_dir
 
         self.config = {}
         self.load_profiles()

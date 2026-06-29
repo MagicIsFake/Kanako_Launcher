@@ -21,3 +21,5 @@ dist/
 *.njsproj
 *.sln
 *.swp
+
+compress.bat
