@@ -23,3 +23,4 @@ dist/
 *.swp
 
 compress.bat
+git_push.bat

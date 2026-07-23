@@ -6,7 +6,7 @@ VERSION_TYPE_BETA     = "old_beta"
 VERSION_TYPE_ALPHA    = "old_alpha"
 
 DEFAULT_JVM_ARGS = (
-    "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC "
+    "-Xmx4G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC "
     "-XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 "
     "-XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
 )

@@ -452,19 +452,23 @@ button:active, .btn-small:active, .btn-action:active, .version-select-trigger:ac
     white-space: normal !important; 
 }
 
-/* 2. Giải quyết Yêu cầu 2: Thụt lề dòng khi log quá dài tự động xuống hàng (Hanging Indent) */
-#console-output span {
-    display: block;                   /* Chuyển span thành khối (block) để có thể áp dụng luật thụt lề */
-    white-space: pre-wrap;            /* Giữ nguyên định dạng xuống dòng tự nhiên của text bên trong log */
-    overflow-wrap: anywhere;          /* Giúp các chuỗi dài (như đường dẫn file, URL) tự bẻ dòng khi hết khung */
-    
-    /* Kỹ thuật Hanging Indent (Thụt lề dòng thứ 2 trở đi) */
-    padding-left: 2.5rem;             /* Đẩy toàn bộ khối log lùi vào một khoảng (khoảng 1 tab hoặc tùy chỉnh theo ý bạn) */
-    text-indent: -2.5rem;             /* Kéo riêng dòng đầu tiên quay ngược trở lại sát lề trái ban đầu */
+/* 2. Hanging indent: first physical line flush left, any line after an
+      internal line-break (e.g. Java stack trace lines inside one log entry)
+      is indented so it visually reads as a sub-line of the entry above it.
+      Scoped to span[class^="log-"] only, so the unclassed inner text-wrapper
+      spans created by createColorCodedSpan don't also match and stack a
+      second, uncancelled indent on top of this one. */
+#console-output span[class^="log-"] {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding-left: 2rem;
+    text-indent: -2rem;
 }
 
-/* Định dạng riêng cho dòng phụ / Java Stack Trace */
-#console-output span.log-continuation {
-    text-indent: 0 !important;   /* Hủy bỏ việc kéo giật lùi dòng về phía bên trái */
-    padding-left: 3.5rem;        /* Thụt lề sâu hẳn vào trong để tạo phân cấp khối lỗi rõ ràng */
+/* Continuation spans (separate log calls whose text doesn't start with "[")
+   are indented on every line, since the whole span IS the sub-line */
+#console-output span[class^="log-"].log-continuation {
+    text-indent: 0 !important;
+    padding-left: 2rem;
 }

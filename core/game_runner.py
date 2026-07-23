@@ -197,6 +197,7 @@ def run_launch_process(username: str, current_prof: dict,
     arguments, because that overrides what the library already set up and
     points LWJGL at an empty directory → "Failed to locate library: lwjgl.dll".
     """
+    
     version       = current_prof["version"]
     minecraft_dir = current_prof["game_dir"]
     java_path     = get_suitable_java(version, current_prof)
@@ -204,18 +205,27 @@ def run_launch_process(username: str, current_prof: dict,
     os.makedirs(minecraft_dir, exist_ok=True)
     _bootstrap_minecraft_dir(minecraft_dir, version)
 
-    player_uuid = str(uuid.uuid3(uuid.NAMESPACE_DNS, username))
-    dummy_token = str(uuid.uuid4())
+    # --- ĐOẠN SỬA ĐỔI TÀI KHOẢN OFFLINE CHUẨN ---
+    import hashlib
+
+    # 1. Tạo UUID chuẩn offline theo thuật toán của Minecraft
+    offline_player_str = f"OfflinePlayer:{username}"
+    hash_bytes = hashlib.md5(offline_player_str.encode('utf-8')).digest()
+    hash_list = list(hash_bytes)
+    hash_list[6] = (hash_list[6] & 0x0f) | 0x30  # Set version 3
+    hash_list[8] = (hash_list[8] & 0x3f) | 0x80  # Set variant
+    player_uuid = str(uuid.UUID(bytes=bytes(hash_list)))
 
     options = {
         "username":       username,
         "uuid":           player_uuid,
-        "token":          dummy_token,
+        "token":          player_uuid, # Đổi thành chuỗi 32 số 0 thuần túy
+        "userType":       "legacy",    
         # Do NOT pass jvmArguments here — the library would embed them inside
         # the generated command between the fixed JVM flags it owns
         # (e.g. -Djava.library.path, -Dorg.lwjgl.system.SharedLibraryExtractPath).
         # We insert user args manually at position 1 below, which is safe
-        # because position 0 is always the java executable.
+        # because position 0 is always the java executable.        
         "executablePath": java_path,
         "gameDirectory":  minecraft_dir,
     }
@@ -263,9 +273,41 @@ def run_launch_process(username: str, current_prof: dict,
         # Build the launch command — minecraft_launcher_lib handles ALL JVM flags
         # including -Djava.library.path, -Dorg.lwjgl.system.SharedLibraryExtractPath,
         # etc., correctly for both legacy and modern versions.
+        # Build the launch command — minecraft_launcher_lib handles ALL JVM flags
         mc_command = minecraft_launcher_lib.command.get_minecraft_command(
             version, minecraft_dir, options
         )
+
+        # ── SIÊU ĐÁNH CHẶN: KÍCH HOẠT JAVA AGENT ĐỂ BYPASS MULTIPLAYER VANILLA ──
+        try:
+            # 1. Ép tham số userType về legacy và sửa accessToken thành chuỗi giả cấu trúc JWT hợp lệ
+            dummy_jwt = (
+                "eyJhbGciOiJSUzI1NiJ9."
+                "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+                "XfG_p8_S472NlzvO8_Bv3M7X4B4J9w8mH7W2l_wO6P4X9Y8zK7gV9b6M2v_X4N7_b8v9M_wO6X4"
+            )
+            
+            for idx, arg in enumerate(mc_command):
+                if arg == "--userType" and idx + 1 < len(mc_command):
+                    mc_command[idx + 1] = "legacy"
+                if arg == "--accessToken" and idx + 1 < len(mc_command):
+                    mc_command[idx + 1] = dummy_jwt  # Giữ lại token giả lập cấu trúc JWT để bypass JOpt
+            
+            # 2. Định vị file Agent và thư viện Javassist phụ trợ
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            agent_path = os.path.join(current_dir, "patches", "multiplayer_patch.jar")
+            lib_path = os.path.join(current_dir, "patches", "javassist.jar")
+            
+            # 3. Tiến hành tiêm nạp chuỗi kép vào JVM
+            if os.path.exists(agent_path) and os.path.exists(lib_path):
+                mc_command.insert(1, f"-Xbootclasspath/a:{lib_path}")
+                mc_command.insert(2, f"-javaagent:{agent_path}")
+                print(f"[Launcher Agent] Armed successfully with core libraries!")
+            else:
+                print(f"[Launcher Agent] WARNING: Missing files inside core/patches/ folder!")
+                
+        except Exception as e:
+            print(f"[Launcher Agent] Error injecting agent setup: {e}")
 
         # ── Native DLL extraction (all versions) ────────────────────────────
         # minecraft_launcher_lib already set -Djava.library.path to the
@@ -336,6 +378,11 @@ def run_launch_process(username: str, current_prof: dict,
             if arg in ("-cp", "-classpath") or not arg.startswith("-"):
                 insert_at = idx
                 break
+
+        # ÉP JVM ĐẦU RA PHẢI LÀ UTF-8 ĐỂ KHÔNG BỊ LỖI PHÔNG TIẾNG VIỆT
+        if "-Dfile.encoding=UTF-8" not in mc_command:
+            mc_command.insert(insert_at, "-Dfile.encoding=UTF-8")
+            insert_at += 1
 
         user_jvm_args = [a.strip() for a in current_prof.get("jvm_args", "").split() if a.strip()]
         for arg in reversed(user_jvm_args):

@@ -40,11 +40,107 @@ function switchTab(name) {
     document.getElementById("tab-" + name).classList.add("active");
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     document.getElementById("tbtn-" + name).classList.add("active");
+
+    // Console search box: hide (not close) when leaving the console tab,
+    // and restore it if it was left open when coming back. Search text /
+    // filter state is untouched either way.
+    const searchBox = document.getElementById("console-search-box");
+    if (searchBox) {
+        if (name === "console") {
+            if (window.consoleSearchOpen) {
+                searchBox.classList.remove("hidden");
+            }
+        } else {
+            searchBox.classList.add("hidden");
+        }
+    }
 }
 
 // ==========================================
 // 3. CONSOLE LOGGING
 // ==========================================
+
+function createColorCodedSpan(text, baseLevel, forceContinuation) {
+    const container = document.createElement("span");
+    container.className = "log-" + baseLevel;
+
+    // Chèn khoảng trắng ẩn (zero-width space) ngay sau các ký tự phân tách
+    // đường dẫn/URL ('/', '\', ':') để trình duyệt ưu tiên xuống dòng tại
+    // các vị trí này, thay vì cắt ngang giữa từ (vd: ".mcassetsroot")
+    function insertSoftBreaks(str) {
+        return str.replace(/([\/\\:])/g, "$1\u200B");
+    }
+
+    // Bỏ qua các mã màu/định dạng Minecraft (§7, &#RRGGBB, ...) đứng ở đầu dòng
+    // trước khi kiểm tra dấu "[", để không bị nhận nhầm thành dòng phụ (continuation)
+    const leadingCodeRegex = /^(§#[0-9a-fA-F]{6}|&#[0-9a-fA-F]{6}|§[0-9a-fk-or])+/;
+    const strippedForCheck = text.trim().replace(leadingCodeRegex, "");
+    if (forceContinuation || !strippedForCheck.startsWith("[")) {
+        container.classList.add("log-continuation");
+    }
+
+    // Giữ cờ /g ở đây để split chuỗi văn bản ra chuẩn xác
+    const colorRegex = /(§#[0-9a-fA-F]{6}|&#[0-9a-fA-F]{6}|§[0-9a-fk-or])/g;
+    const parts = text.split(colorRegex);
+
+    // Regex kiểm tra đơn lẻ: Tuyệt đối KHÔNG dùng cờ /g để tránh lỗi lastIndex
+    const singleColorRegex = /^(§#[0-9a-fA-F]{6}|&#[0-9a-fA-F]{6}|§[0-9a-fk-or])$/;
+
+    const mcColors = {
+        '0': '#000000', '1': '#0000AA', '2': '#00AA00', '3': '#00AAAA',
+        '4': '#AA0000', '5': '#AA00AA', '6': '#FFAA00', '7': '#AAAAAA',
+        '8': '#555555', '9': '#5555FF', 'a': '#55FF55', 'b': '#55FFFF',
+        'c': '#FF5555', 'd': '#FF55FF', 'e': '#FFFF55', 'f': '#FFFFFF'
+    };
+
+    let currentColor = null;
+    let isBold = false;
+    let isItalic = false;
+    let isUnderline = false;
+    let isStrikethrough = false;
+
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (!part) continue;
+
+        if (singleColorRegex.test(part)) {
+            // Xử lý mã màu / mã định dạng thương hiệu Minecraft
+            if (part.startsWith('§#') || part.startsWith('&#')) {
+                currentColor = part.substring(2); 
+            } else {
+                const code = part.charAt(1).toLowerCase();
+                if (mcColors[code] !== undefined) {
+                    currentColor = mcColors[code];
+                } else if (code === 'r') { 
+                    currentColor = null;
+                    isBold = isItalic = isUnderline = isStrikethrough = false;
+                } else if (code === 'l') isBold = true;
+                else if (code === 'o') isItalic = true;
+                else if (code === 'n') isUnderline = true;
+                else if (code === 'm') isStrikethrough = true;
+            }
+        } else {
+            // Đóng gói phần text vào span con
+            const textNode = document.createElement("span");
+            textNode.textContent = insertSoftBreaks(part);
+            if (currentColor) textNode.style.color = currentColor;
+            if (isBold) textNode.style.fontWeight = "bold";
+            if (isItalic) textNode.style.fontStyle = "italic";
+            
+            let decorations = [];
+            if (isUnderline) decorations.push("underline");
+            if (isStrikethrough) decorations.push("line-through");
+            if (decorations.length > 0) textNode.style.textDecoration = decorations.join(" ");
+
+            container.appendChild(textNode);
+        }
+    }
+
+    if (container.children.length === 0) {
+        container.textContent = insertSoftBreaks(text);
+    }
+    return container;
+}
 
 let _consoleLineCount = 1;
 
@@ -60,12 +156,8 @@ function appendLog(text, level) {
               : "info";
     }
 
-    const span = document.createElement("span");
-    span.className = "log-" + level;
-    if (!text.trim().startsWith("[")) {
-        span.classList.add("log-continuation");
-    }
-    span.textContent = text;
+    // Gọi hàm tạo thẻ span đã phân tách màu sắc
+    const span = createColorCodedSpan(text, level);
     box.appendChild(span);
     box.appendChild(document.createTextNode("\n"));
 
@@ -73,6 +165,16 @@ function appendLog(text, level) {
     const counter = document.getElementById("console-line-count");
     if (counter) counter.textContent =
         _consoleLineCount === 1 ? "1 line" : _consoleLineCount + " lines";
+
+    // Đồng bộ: Nếu hộp tìm kiếm đang hoạt động, áp dụng bộ lọc trực tiếp lên dòng log mới
+    const searchInput = document.getElementById("console-search-input");
+    const searchBox = document.getElementById("console-search-box");
+    if (searchBox && !searchBox.classList.contains("hidden") && searchInput) {
+        const query = searchInput.value.toLowerCase();
+        if (query && !span.textContent.toLowerCase().includes(query)) {
+            span.style.display = "none";
+        }
+    }
 
     if (box.scrollTop + box.clientHeight >= box.scrollHeight - 60) {
         box.scrollTop = box.scrollHeight;
@@ -465,3 +567,195 @@ document.addEventListener("click", function(event) {
         dropdown.classList.add("hidden");
     }
 });
+
+// ==========================================
+// 11. SHORTCUTS & SEARCH FEATURE (CTRL+F / DELETE)
+// ==========================================
+
+document.addEventListener("DOMContentLoaded", initConsoleShortcutsAndSearch);
+if (document.readyState === "complete" || document.readyState === "interactive") {
+    initConsoleShortcutsAndSearch();
+}
+
+function initConsoleShortcutsAndSearch() {
+    if (document.getElementById("console-search-box")) return;
+
+    const searchBox = document.createElement("div");
+    searchBox.id = "console-search-box";
+    searchBox.classList.add("hidden");
+    
+    // ĐỒNG BỘ STYLE: Sử dụng thiết kế phẳng, vuông vức và mã màu giống tab-bar/button của launcher
+    searchBox.style.position = "fixed";
+    searchBox.style.top = "35px"; 
+    searchBox.style.right = "20px";
+    searchBox.style.background = "#2b2b2b";
+    searchBox.style.border = "2px solid #000";
+    searchBox.style.padding = "4px 10px";
+    searchBox.style.borderRadius = "0px"; // Không bo góc theo đúng phong cách card-frame/tab-btn
+    searchBox.style.zIndex = "9999";
+    searchBox.style.display = "flex";
+    searchBox.style.alignItems = "center";
+    searchBox.style.gap = "10px";
+    searchBox.style.boxShadow = "inset 1px 1px 0 #555, inset -1px -1px 0 #111, 0 4px 12px rgba(0,0,0,0.6)";
+    searchBox.style.fontFamily = "'VVMAyuMincho', sans-serif";
+
+    searchBox.innerHTML = `
+        <input type="text" id="console-search-input" placeholder="LỌC / TÌM LOG..." 
+               style="background:#1a1a1a; color:#e8e8e8; border:1px solid #444; padding:4px 8px; outline:none; font-size:11px; width:180px; font-family:'VVMAyuMincho', sans-serif;">
+        <span id="console-search-count" style="color:#888; font-size:11px; min-width:70px; text-align:center;">0 TÌM THẤY</span>
+        <button id="console-search-close" style="background:#2b2b2b; border:1px solid #444; color:#FF5555; cursor:pointer; font-weight:bold; font-size:11px; padding:2px 6px; box-shadow: inset 1px 1px 0 #555, inset -1px -1px 0 #111; font-family:'VVMAyuMincho', sans-serif;">✕</button>
+    `;
+
+    const searchStyle = document.createElement('style');
+    searchStyle.innerHTML = `
+        #console-search-box.hidden { display: none !important; }
+        
+        /* Hiệu ứng dòng log đang được chọn bằng phím mũi tên */
+        .log-item-selected {
+            background-color: rgba(56, 189, 248, 0.2) !important; /* Màu xanh cyan mờ đồng bộ màu active tab */
+            outline: 1px dashed #38BDF8;
+            display: inline-block;
+            width: 100%;
+        }
+        #console-search-close:hover {
+            color: #FFFF55 !important;
+            border-color: #fff !important;
+        }
+    `;
+    document.head.appendChild(searchStyle);
+
+    document.body.appendChild(searchBox);
+
+    const input = document.getElementById("console-search-input");
+    const countSpan = document.getElementById("console-search-count");
+    const closeBtn = document.getElementById("console-search-close");
+
+    // Các biến phục vụ việc điều hướng bằng phím mũi tên
+    let visibleLines = [];
+    let selectedIndex = -1;
+
+    function closeSearch() {
+        searchBox.classList.add("hidden");
+        input.value = "";
+        removeCurrentSelection();
+        resetLogVisibility();
+        input.blur();
+        visibleLines = [];
+        selectedIndex = -1;
+        window.consoleSearchOpen = false;
+    }
+
+    function removeCurrentSelection() {
+        if (selectedIndex >= 0 && visibleLines[selectedIndex]) {
+            visibleLines[selectedIndex].classList.remove("log-item-selected");
+        }
+    }
+
+    closeBtn.onclick = closeSearch;
+
+    // Xử lý bộ lọc tìm kiếm
+    input.oninput = function() {
+        const query = input.value.trim().toLowerCase();
+        const box = document.getElementById("console-output");
+        if (!box) return;
+
+        removeCurrentSelection();
+        const lines = box.querySelectorAll("span[class^='log-']");
+        visibleLines = [];
+
+        if (!query) {
+            resetLogVisibility();
+            countSpan.textContent = "0 TÌM THẤY";
+            selectedIndex = -1;
+            return;
+        }
+
+        lines.forEach(line => {
+            if (line.textContent.toLowerCase().includes(query)) {
+                line.style.display = ""; 
+                visibleLines.push(line); // Lưu lại các dòng thỏa mãn để bấm nút di chuyển
+            } else {
+                line.style.display = "none"; 
+            }
+        });
+
+        countSpan.textContent = `${visibleLines.length} TÌM THẤY`;
+        selectedIndex = -1; // Reset lại vị trí lựa chọn mỗi khi từ khóa thay đổi
+    };
+
+    // HỖ TRỢ PHÍM MŨI TÊN LÊN / XUỐNG ĐỂ DI CHUYỂN GIỮA CÁC MỤC LOG KHI ĐANG TRONG INPUT
+    input.onkeydown = function(e) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            if (visibleLines.length === 0) return;
+            e.preventDefault(); // Ngăn hành vi cuộn trang mặc định hoặc di chuyển con trỏ chữ trong input
+
+            removeCurrentSelection();
+
+            if (e.key === "ArrowDown") {
+                selectedIndex++;
+                if (selectedIndex >= visibleLines.length) {
+                    selectedIndex = 0; // Vòng lặp lại dòng đầu tiên nếu đi quá danh sách
+                }
+            } else if (e.key === "ArrowUp") {
+                selectedIndex--;
+                if (selectedIndex < 0) {
+                    selectedIndex = visibleLines.length - 1; // Vòng lên dòng cuối cùng nếu bấm Lên ở vị trí đầu
+                }
+            }
+
+            // Gắn class highlight và tự động cuộn màn hình đến dòng đang chọn
+            const currentLine = visibleLines[selectedIndex];
+            if (currentLine) {
+                currentLine.classList.add("log-item-selected");
+                currentLine.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+        }
+    };
+
+    function resetLogVisibility() {
+        const box = document.getElementById("console-output");
+        if (!box) return;
+        box.querySelectorAll("span[class^='log-']").forEach(line => {
+            line.style.display = "";
+        });
+    }
+
+    // THAY THẾ TOÀN BỘ ĐOẠN LISTENER "KEYDOWN" CŨ BẰNG ĐOẠN NÀY:
+    window.addEventListener("keydown", function(e) {
+        const consoleTab = document.getElementById("tab-console");
+        const isConsoleTabActive = consoleTab && consoleTab.classList.contains("active");
+
+        // 1. ƯU TIÊN KIỂM TRA CTRL + F TRƯỚC
+        if (e.ctrlKey && e.key.toLowerCase() === "f") {
+            if (isConsoleTabActive) {
+                e.preventDefault(); // Chặn hộp tìm kiếm mặc định của trình duyệt
+                window.consoleSearchOpen = true;
+                searchBox.classList.remove("hidden");
+                input.focus();
+                input.select();
+                if (input.value.trim()) {
+                    input.oninput(); // Kích hoạt lại bộ lọc nếu đang có sẵn từ khóa cũ
+                }
+            }
+            return; // Thoát sớm để không bị ảnh hưởng bởi logic bên dưới
+        }
+
+        // 2. Nếu đang ở tab khác, không xử lý Escape/Delete bên dưới.
+        // Việc ẩn/hiện hộp tìm kiếm khi đổi tab đã do switchTab() đảm nhiệm,
+        // nên KHÔNG tự động ẩn/đóng ở đây nữa.
+        if (!isConsoleTabActive) {
+            return;
+        }
+
+        // 3. Xử lý phím Escape để đóng hẳn hộp tìm kiếm (xóa luôn từ khóa/bộ lọc)
+        if (e.key === "Escape" && !searchBox.classList.contains("hidden")) {
+            closeSearch();
+        }
+
+        // 4. Xử lý phím Delete để xóa nhanh log (chỉ hoạt động khi không viết chữ trong input tìm kiếm)
+        if (e.key === "Delete" && document.activeElement !== input) {
+            e.preventDefault();
+            if (typeof clearConsole === "function") clearConsole();
+        }
+    });
+}
