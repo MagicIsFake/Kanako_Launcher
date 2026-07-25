@@ -530,7 +530,14 @@ async function removeCurrentProfile() {
     const deleteFiles = document.getElementById("delete-game-files").checked;
     let confirmMsg = `Are you sure you want to completely REMOVE the profile "${currentEditingOldId}"?`;
     if (deleteFiles) confirmMsg += "\n\n⚠️ WARNING: YOU SELECTED TO DELETE ALL DATA FILES! THIS WILL WIPE OUT THE GAME FOLDER FOREVER!";
-    if (!confirm(confirmMsg)) return;
+
+    const confirmed = await showMCConfirm(confirmMsg, {
+        title: "REMOVE PROFILE",
+        okText: "REMOVE",
+        cancelText: "CANCEL",
+        danger: true,
+    });
+    if (!confirmed) return;
 
     window.updateStatus("Processing profile removal...", "#94a3b8");
 
@@ -548,7 +555,7 @@ async function removeCurrentProfile() {
         // Now it's safe to trigger profile-change logic on whatever is selected
         handleProfileChange();
 
-        window.updateStatus("Profile removed successfully!", "#E74C3C");
+        window.updateStatus("Profile removed successfully!", "#2ECC71");
     } catch (err) {
         appendLog("[ERROR] removeCurrentProfile: " + err, "error");
         window.updateStatus("Error trying to remove profile!", "#E74C3C");
@@ -759,3 +766,118 @@ function initConsoleShortcutsAndSearch() {
         }
     });
 }
+
+// Hàm hiển thị hộp thoại
+function openMCBox() {
+    document.getElementById("mcMessageBox").classList.add("active");
+}
+
+// Được gọi từ bridge.py (qua evaluate_js) sau khi game thoát với mã lỗi khác 0.
+// payload = { mods: [{mod_id, requested_by, expected_range}, ...], summary, crashReportPath }
+window.showMissingMods = function (payload) {
+    payload = payload || {};
+    const mods = Array.isArray(payload.mods) ? payload.mods : [];
+
+    const titleEl = document.querySelector("#mcMessageBox .mc-modal-title");
+    const bodyEl  = document.querySelector("#mcMessageBox .mc-modal-body");
+    if (!titleEl || !bodyEl) return;
+
+    if (mods.length > 0) {
+        titleEl.textContent = "MISSING MODS";
+        let html = "<p>The game closed because the following mods are missing:</p><ul class=\"mc-missing-mod-list\">";
+        mods.forEach(dep => {
+            const modId       = escapeHtml(dep.mod_id || "?");
+            const requestedBy = escapeHtml(dep.requested_by || "?");
+            const range        = dep.expected_range ? ` (${escapeHtml(dep.expected_range)})` : "";
+            html += `<li><b>${modId}</b>${range} — required by <i>${requestedBy}</i></li>`;
+        });
+        html += "</ul>";
+        bodyEl.innerHTML = html;
+    } else {
+        // Không tách được danh sách mod cụ thể (có thể do định dạng log của
+        // NeoForge đã đổi) — vẫn hiển thị popup thay vì im lặng, kèm vài
+        // dòng log cuối để không bắt người dùng phải tự lục console.
+        titleEl.textContent = "GAME EXITED WITH AN ERROR";
+        const summary = escapeHtml(payload.summary || "Unknown cause. Please check the CONSOLE.");
+        let html = `<p>The game closed unexpectedly. Latest log:</p><pre class="mc-crash-summary">${summary}</pre>`;
+        if (payload.crashReportPath) {
+            html += `<p class="hint-text">Crash report: ${escapeHtml(payload.crashReportPath)}</p>`;
+        }
+        bodyEl.innerHTML = html;
+    }
+
+    openMCBox();
+};
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+// Hàm đóng hộp thoại
+function closeMCBox() {
+    document.getElementById("mcMessageBox").classList.remove("active");
+}
+
+// ==========================================
+// HỘP THOẠI XÁC NHẬN (thay thế confirm() mặc định của trình duyệt)
+// ==========================================
+
+let _mcConfirmResolver = null;
+
+/**
+ * showMCConfirm(message, opts) -> Promise<boolean>
+ * opts: { title, okText, cancelText, danger }
+ * Dùng thay cho window.confirm(): await showMCConfirm("Bạn có chắc...?")
+ */
+function showMCConfirm(message, opts) {
+    opts = opts || {};
+
+    document.getElementById("mcConfirmTitle").textContent = opts.title || "XÁC NHẬN";
+
+    const bodyEl = document.getElementById("mcConfirmBody");
+    // Giữ format xuống dòng như confirm() gốc, vẫn escape để tránh injection
+    bodyEl.innerHTML = `<p>${escapeHtml(message).replace(/\n/g, "<br>")}</p>`;
+
+    const okBtn = document.getElementById("mcConfirmOkBtn");
+    okBtn.textContent = opts.okText || "XÁC NHẬN";
+    okBtn.classList.toggle("mc-btn-danger", opts.danger !== false);
+
+    const cancelBtn = document.querySelector("#mcConfirmBox .mc-btn-gray");
+    if (cancelBtn) cancelBtn.textContent = opts.cancelText || "HỦY";
+
+    document.getElementById("mcConfirmBox").classList.add("active");
+
+    return new Promise(resolve => {
+        _mcConfirmResolver = resolve;
+    });
+}
+
+// Được gọi bởi nút HỦY / XÁC NHẬN / nút X / phím Esc
+function mcConfirmResolve(result) {
+    document.getElementById("mcConfirmBox").classList.remove("active");
+    if (_mcConfirmResolver) {
+        const resolve = _mcConfirmResolver;
+        _mcConfirmResolver = null;
+        resolve(result);
+    }
+}
+
+// LẮNG NGHE SỰ KIỆN BẤM PHÍM ESC TRÊN BÀN PHÍM
+window.addEventListener("keydown", function (event) {
+    // Nếu phím bấm là Escape (Esc)
+    if (event.key === "Escape" || event.keyCode === 27) {
+        // Kiểm tra xem hộp thoại có đang hiển thị không thì mới đóng
+        const modal = document.getElementById("mcMessageBox");
+        if (modal.classList.contains("active")) {
+            closeMCBox();
+        }
+        const confirmBox = document.getElementById("mcConfirmBox");
+        if (confirmBox.classList.contains("active")) {
+            mcConfirmResolve(false); // Esc = Hủy
+        }
+    }
+});

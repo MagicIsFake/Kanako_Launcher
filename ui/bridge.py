@@ -139,13 +139,14 @@ class LauncherBridgeAPI:
             def btn_cb(state, text):
                 pass
 
+            # --- THAY ĐỔI: Chuyển từ destroy() sang hide() để chạy ngầm ---
             def success_cb():
                 if self._window:
                     self._window.evaluate_js("window.launchSuccess()")
                 if not keep_launcher_open:
-                    print("Game started — closing launcher.")
+                    print("Game started — hiding launcher window.")
                     if self._window:
-                        self._window.destroy()
+                        self._window.hide()  # Ẩn tạm thời thay vì xóa sổ window
                 else:
                     print("Game started — keeping launcher alive.")
 
@@ -192,6 +193,45 @@ class LauncherBridgeAPI:
                 )
                 self.console_log(display_msg, level)
 
+            # --- BỔ SUNG: Callback hiển thị popup mod bị thiếu (thay cho tkinter) ---
+            def missing_mods_cb(missing_dependencies, crash_summary, crash_report_path):
+                if not self._window:
+                    return
+                payload = {
+                    "mods": missing_dependencies,          # [] if nothing was parsed
+                    "summary": crash_summary,               # tail of log, only if mods == []
+                    "crashReportPath": crash_report_path,    # None if no file was found
+                }
+                safe_payload = json.dumps(payload)
+                # Bring the launcher window back to front so the popup is visible
+                # even if it was hidden after a successful-looking launch.
+                self._window.show()
+                self._window.evaluate_js(f"window.showMissingMods({safe_payload})")
+
+            # --- BỔ SUNG: Callback xử lý khi tiến trình game kết thúc ---
+            def game_exit_cb(return_code):
+                print(f"[Launcher Backend] Game exited with code: {return_code}")
+                
+                if not keep_launcher_open:
+                    if return_code != 0:
+                        # TRƯỜNG HỢP 1: Game bị crash đột ngột -> Hiện lại launcher và bật tab console
+                        if self._window:
+                            self._window.show()
+                            self._window.evaluate_js("switchTab('console');")
+                            self.console_log(f"[LAUNCHER] Game đã bị crash đột ngột với mã lỗi (Exit Code): {return_code}.", "error")
+                            self.console_log("[LAUNCHER] Tự động hiển thị tab Console để kiểm tra nhật ký lỗi.", "warn")
+                    else:
+                        # TRƯỜNG HỢP 2: Người chơi thoát game bình thường -> Đóng hẳn launcher
+                        print("[Launcher Backend] Game exited normally. Closing launcher completely.")
+                        if self._window:
+                            self._window.destroy()
+                else:
+                    # Nếu người chơi có tick chọn Keep launcher open thì launcher vốn đang mở sẵn, chỉ cần bắn thông báo kết quả vào log
+                    if return_code != 0:
+                        self.console_log(f"[LAUNCHER] Game bị crash (Exit Code: {return_code}).", "error")
+                    else:
+                        self.console_log(f"[LAUNCHER] Game đã đóng bình thường.", "info")
+
             threading.Thread(
                 target=run_launch_process,
                 args=(
@@ -200,6 +240,8 @@ class LauncherBridgeAPI:
                     self._sanitized_versions,
                     game_log_cb,
                     None,
+                    game_exit_cb,     # exit_cb
+                    missing_mods_cb,  # <-- popup báo mod thiếu, thay cho tkinter messagebox
                 ),
                 daemon=True,
             ).start()

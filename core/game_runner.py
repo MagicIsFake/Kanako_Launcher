@@ -1,6 +1,7 @@
 # core/game_runner.py
 import os
 import re
+import time
 import shutil
 import uuid
 import json
@@ -10,7 +11,93 @@ import traceback
 import minecraft_launcher_lib
 from constants import JAVA_PATHS
 from core.patches import _normalize_arg_item
+from core.bypass.activate import activate_bypass
 
+# ──────────────────────────────────────────────────────────────────────────
+# Missing-mod detection
+#
+# NeoForge (1.20.2+) no longer reliably prints the old FML-style
+#     Mod ID: 'x', Requested by: 'y', Expected range: 'z', Actual version: '[MISSING]'
+# line to stdout the way old Forge did. The dependency-loading failure is
+# now raised as a ModLoadingCrashException and rendered as a structured
+# crash report on disk (<minecraft_dir>/crash-reports/crash-*.txt), and/or
+# on the in-game crash GUI — not always as one clean parseable stdout line.
+#
+# So we do two things:
+#   1. Keep scanning stdout live for the old-style line (works on old Forge,
+#      and on some NeoForge builds that still emit it).
+#   2. As a fallback, if the process exits non-zero and nothing matched in
+#      stdout, read the newest crash report file written during this run
+#      and re-run the patterns against its full text, which is far more
+#      complete than stdout.
+#
+# IMPORTANT: I have not verified the *exact* current NeoForge 1.21.1 wording
+# against a real crash report from your setup. The patterns below cover the
+# old Forge format plus a generic "X requires Y" fallback phrasing. If a
+# missing-mod crash still doesn't produce a popup, paste me the actual
+# crash-reports/*.txt (or the console text) from that run and I'll tighten
+# these patterns to match your real output exactly.
+# ──────────────────────────────────────────────────────────────────────────
+
+DEP_PATTERNS = [
+    # Old Forge / FML dependency-report line
+    re.compile(
+        r"Mod ID:\s*'([^']*)',\s*Requested by:\s*'([^']*)',\s*Expected range:\s*'([^']*)',"
+        r"\s*Actual version:\s*'\[MISSING\]'"
+    ),
+    # Generic "modid requires otherid [range]" phrasing seen in newer crash
+    # report "Details" sections and mod-mismatch screens.
+    re.compile(
+        r"[\"']?([\w\-.]+)[\"']?\s+requires\s+[\"']?([\w\-.]+)[\"']?"
+        r"(?:\s*(@?\s*[\[\(][^\]\)]*[\]\)]))?"
+        r"\s*(?:to be present|to run|but it'?s? missing|which is missing|or above)",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _find_latest_crash_report(minecraft_dir: str, after_ts: float):
+    """Return the newest crash-report .txt written after after_ts, or None."""
+    crash_dir = os.path.join(minecraft_dir, "crash-reports")
+    if not os.path.isdir(crash_dir):
+        return None
+    candidates = []
+    for fname in os.listdir(crash_dir):
+        if not fname.lower().endswith(".txt"):
+            continue
+        fpath = os.path.join(crash_dir, fname)
+        try:
+            if os.path.getmtime(fpath) >= after_ts - 2:  # small buffer
+                candidates.append(fpath)
+        except OSError:
+            continue
+    if not candidates:
+        return None
+    candidates.sort(key=os.path.getmtime, reverse=True)
+    return candidates[0]
+
+
+def _extract_missing_mods(text: str):
+    """Run all DEP_PATTERNS against text, dedupe, return list of dicts."""
+    found = []
+    seen = set()
+    for pattern in DEP_PATTERNS:
+        for match in pattern.finditer(text):
+            mod_id = match.group(1) or ""
+            requested_by = match.group(2) or ""
+            expected_range = ""
+            if match.lastindex and match.lastindex >= 3:
+                expected_range = match.group(3) or ""
+            key = (mod_id.lower(), requested_by.lower())
+            if key in seen or not mod_id:
+                continue
+            seen.add(key)
+            found.append({
+                "mod_id": mod_id,
+                "requested_by": requested_by,
+                "expected_range": expected_range,
+            })
+    return found
 
 def java_major_for_version(version_str: str) -> int:
     """
@@ -159,7 +246,8 @@ def _bootstrap_minecraft_dir(minecraft_dir: str, current_version: str = "1.20.1"
 
 def run_launch_process(username: str, current_prof: dict,
                        status_cb, progress_cb, btn_cb, success_cb,
-                       sanitized_versions: set, log_cb=None, post_install_cb=None):
+                       sanitized_versions: set, log_cb=None, post_install_cb=None, exit_cb=None,
+                       missing_mods_cb=None):
     """
     Launch Minecraft in fully self-contained, per-profile mode.
 
@@ -205,7 +293,7 @@ def run_launch_process(username: str, current_prof: dict,
     os.makedirs(minecraft_dir, exist_ok=True)
     _bootstrap_minecraft_dir(minecraft_dir, version)
 
-    # --- ĐOẠN SỬA ĐỔI TÀI KHOẢN OFFLINE CHUẨN ---
+    # ──[ ĐOẠN SỬA ĐỔI TÀI KHOẢN OFFLINE CHUẨN ]──────────────────────────────
     import hashlib
 
     # 1. Tạo UUID chuẩn offline theo thuật toán của Minecraft
@@ -271,45 +359,14 @@ def run_launch_process(username: str, current_prof: dict,
 
     try:
         # Build the launch command — minecraft_launcher_lib handles ALL JVM flags
-        # including -Djava.library.path, -Dorg.lwjgl.system.SharedLibraryExtractPath,
-        # etc., correctly for both legacy and modern versions.
-        # Build the launch command — minecraft_launcher_lib handles ALL JVM flags
         mc_command = minecraft_launcher_lib.command.get_minecraft_command(
             version, minecraft_dir, options
         )
 
-        # ── SIÊU ĐÁNH CHẶN: KÍCH HOẠT JAVA AGENT ĐỂ BYPASS MULTIPLAYER VANILLA ──
-        try:
-            # 1. Ép tham số userType về legacy và sửa accessToken thành chuỗi giả cấu trúc JWT hợp lệ
-            dummy_jwt = (
-                "eyJhbGciOiJSUzI1NiJ9."
-                "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
-                "XfG_p8_S472NlzvO8_Bv3M7X4B4J9w8mH7W2l_wO6P4X9Y8zK7gV9b6M2v_X4N7_b8v9M_wO6X4"
-            )
-            
-            for idx, arg in enumerate(mc_command):
-                if arg == "--userType" and idx + 1 < len(mc_command):
-                    mc_command[idx + 1] = "legacy"
-                if arg == "--accessToken" and idx + 1 < len(mc_command):
-                    mc_command[idx + 1] = dummy_jwt  # Giữ lại token giả lập cấu trúc JWT để bypass JOpt
-            
-            # 2. Định vị file Agent và thư viện Javassist phụ trợ
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            agent_path = os.path.join(current_dir, "patches", "multiplayer_patch.jar")
-            lib_path = os.path.join(current_dir, "patches", "javassist.jar")
-            
-            # 3. Tiến hành tiêm nạp chuỗi kép vào JVM
-            if os.path.exists(agent_path) and os.path.exists(lib_path):
-                mc_command.insert(1, f"-Xbootclasspath/a:{lib_path}")
-                mc_command.insert(2, f"-javaagent:{agent_path}")
-                print(f"[Launcher Agent] Armed successfully with core libraries!")
-            else:
-                print(f"[Launcher Agent] WARNING: Missing files inside core/patches/ folder!")
-                
-        except Exception as e:
-            print(f"[Launcher Agent] Error injecting agent setup: {e}")
+        # ──[ bypass ]───────────────────
+        activate_bypass(mc_command)
 
-        # ── Native DLL extraction (all versions) ────────────────────────────
+        # ──[ Native DLL extraction (all versions) ]────────────────────────────
         # minecraft_launcher_lib already set -Djava.library.path to the
         # 'natives' folder and added the native JARs to -cp.  However for
         # modern LWJGL 3 (1.19+) the self-extractor sometimes fails in
@@ -368,7 +425,7 @@ def run_launch_process(username: str, current_prof: dict,
 
             print(f"[Natives] Extracted {extracted_count} files to {natives_dir}")
 
-        # ── Inject user JVM args (-Xmx, GC flags, etc.) ────────────────────
+        # ──[ Inject user JVM args (-Xmx, GC flags, etc.) ]────────────────────
         # Find the insertion point: after the java executable (index 0) and
         # after any -Djava.library.path / -D* flags the library already placed,
         # but BEFORE -cp and the main class.  This keeps the library's flags
@@ -388,7 +445,7 @@ def run_launch_process(username: str, current_prof: dict,
         for arg in reversed(user_jvm_args):
             mc_command.insert(insert_at, arg)
 
-        # ── Launch ───────────────────────────────────────────────────────────
+        # ──[ Launch ]───────────────────────────────────────────────────────────
         popen_kwargs: dict = {
             "cwd":      minecraft_dir,
             "stdout":   subprocess.PIPE,
@@ -407,19 +464,74 @@ def run_launch_process(username: str, current_prof: dict,
             popen_kwargs["startupinfo"]   = startupinfo
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
+        launch_started_at = time.time()
         process = subprocess.Popen(mc_command, **popen_kwargs)
-
-        # Debug: verify -Djava.library.path is still present and correct.
-        # Remove this print once the game launches successfully.
-        lib_path_args = [a for a in mc_command if "library.path" in a or "SharedLibrary" in a]
-        print(f"[DEBUG] natives args in final command: {lib_path_args}")
 
         status_cb("Launched successfully! Have fun.", "green")
         success_cb()
 
-        if log_cb and process.stdout:
+        missing_dependencies = []
+        recent_lines = []  # keep a short tail for a generic crash summary fallback
+
+        if process.stdout:
             for line in process.stdout:
-                log_cb(line.strip())
+                stripped_line = line.strip()
+                if log_cb:
+                    log_cb(stripped_line)
+
+                if stripped_line:
+                    recent_lines.append(stripped_line)
+                    if len(recent_lines) > 60:
+                        recent_lines.pop(0)
+
+                # Quét trực tiếp trong stdout (bắt được format Forge cũ,
+                # và một số build NeoForge vẫn in ra dòng tương tự)
+                for dep in _extract_missing_mods(stripped_line):
+                    if dep not in missing_dependencies:
+                        missing_dependencies.append(dep)
+
+        # Đợi cho đến khi tiến trình game kết thúc hoàn toàn (hoặc crash hẳn)
+        return_code = process.wait()
+
+        # Nếu game crash và không bắt được gì từ stdout, thử đọc file
+        # crash-report mà NeoForge/Forge ghi ra ổ đĩa — nội dung ở đó đầy đủ
+        # và ổn định hơn nhiều so với chờ đúng một dòng log trong stdout.
+        crash_report_path = None
+        if return_code != 0 and not missing_dependencies:
+            crash_report_path = _find_latest_crash_report(minecraft_dir, launch_started_at)
+            if crash_report_path:
+                try:
+                    with open(crash_report_path, "r", encoding="utf-8", errors="replace") as f:
+                        report_text = f.read()
+                    missing_dependencies = _extract_missing_mods(report_text)
+                except OSError:
+                    pass
+
+        # Báo cho lớp giao diện (bridge.py -> app.js) hiển thị popup, thay vì
+        # dùng tkinter native dialog tách rời khỏi giao diện webview.
+        if return_code != 0 and missing_mods_cb:
+            crash_summary = None
+            if not missing_dependencies:
+                # Không parse được mod cụ thể nào -> vẫn hiển thị popup với
+                # vài dòng log cuối để người dùng không phải tự mò console.
+                crash_summary = "\n".join(recent_lines[-15:])
+            missing_mods_cb(missing_dependencies, crash_summary, crash_report_path)
+
+        # KÍCH HOẠT CALLBACK: Báo cáo lại mã lỗi (return_code) về cho phía Bridge xử lý giao diện
+        if exit_cb:
+            exit_cb(return_code)
+
+    except KeyError as e:
+        traceback.print_exc()
+        msg = ("Mod JSON structure error (unhandled 'value' key)!"
+               if "value" in str(e) else f"Structure error: {e}")
+        status_cb(msg, "red")
+        btn_cb("normal", "PLAY")
+        if exit_cb: exit_cb(-1) # Gọi exit_cb báo lỗi cấu trúc JSON nếu có
+    except Exception as e:
+        status_cb(f"Launch failed: {e}", "red")
+        btn_cb("normal", "PLAY")
+        if exit_cb: exit_cb(-1) # Gọi exit_cb báo lỗi khởi chạy nếu có
 
     except KeyError as e:
         traceback.print_exc()

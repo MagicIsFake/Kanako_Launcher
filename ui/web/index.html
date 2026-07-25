@@ -274,5 +274,48 @@
     </div>
 
     <script src="app.js"></script>
+	
+	<!-- Overlay che toàn màn hình -->
+	<div id="mcMessageBox" class="mc-modal-overlay">
+		<!-- Hộp thoại chính -->
+		<div class="mc-modal-box">
+			
+			<!-- Thanh tiêu đề & nút X -->
+			<div class="mc-modal-header">
+				<span class="mc-modal-title">CẢNH BÁO</span>
+				<button class="mc-close-x" onclick="closeMCBox()">×</button>
+			</div>
+			
+			<!-- Nội dung thông báo — được điền động bởi window.showMissingMods() trong app.js -->
+			<div class="mc-modal-body"></div>
+			
+			<!-- Thanh điều khiển phía dưới -->
+			<div class="mc-modal-footer">
+				<button class="mc-btn" onclick="closeMCBox()">Đóng</button>
+			</div>
+			
+		</div>
+	</div>
+
+	<!-- Overlay xác nhận (thay thế confirm() mặc định của trình duyệt) -->
+	<div id="mcConfirmBox" class="mc-modal-overlay">
+		<div class="mc-modal-box">
+
+			<div class="mc-modal-header">
+				<span class="mc-modal-title" id="mcConfirmTitle">XÁC NHẬN</span>
+				<button class="mc-close-x" onclick="mcConfirmResolve(false)">×</button>
+			</div>
+
+			<!-- Nội dung — được điền động bởi showMCConfirm() trong app.js -->
+			<div class="mc-modal-body" id="mcConfirmBody"></div>
+
+			<div class="mc-modal-footer mc-modal-footer-split">
+				<button class="mc-btn mc-btn-gray" onclick="mcConfirmResolve(false)">HỦY</button>
+				<button class="mc-btn mc-btn-danger" id="mcConfirmOkBtn" onclick="mcConfirmResolve(true)">XÁC NHẬN</button>
+			</div>
+
+		</div>
+	</div>
+	
 </body>
 </html>
